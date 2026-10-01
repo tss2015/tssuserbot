@@ -24,7 +24,7 @@ jobs:
       SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
       ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
       TAG_DELAY: ${{ vars.TAG_DELAY || '5' }}
-      TAG_BATCH_SIZE: ${{ vars.TAG_BATCH_SIZE || '5' }}
+      TAG_BATCH_SIZE: ${{ vars.TAG_BATCH_SIZE || '1' }}
       MAX_MEMBERS_PER_TASK: ${{ vars.MAX_MEMBERS_PER_TASK || '5000' }}
       HEALTH_PORT: "8080"
       LOG_LEVEL: INFO
