@@ -28,16 +28,14 @@ class Database:
         self.events = self.db.events
         self.moods = self.db.moods
 
-        # Remove old bot_user_id indexes created by previous versions.
+        # Remove old bot_user_id indexes
         indexes = await self.users.list_indexes().to_list(length=None)
 
         for index in indexes:
             if index.get("key") == {"bot_user_id": 1}:
                 await self.users.drop_index(index["name"])
 
-        # Enforce uniqueness for real Telegram user IDs only.
-        # Positive Telegram user IDs are indexed; null/missing/invalid
-        # legacy values are not included in this unique index.
+        # Unique bot_user_id only for valid positive IDs
         await self.users.create_index(
             "bot_user_id",
             name="bot_user_id_unique",
@@ -49,8 +47,17 @@ class Database:
             },
         )
 
+        # Remove old telegram_user_id indexes
+        indexes = await self.users.list_indexes().to_list(length=None)
+
+        for index in indexes:
+            if index.get("key") == {"telegram_user_id": 1}:
+                await self.users.drop_index(index["name"])
+
+        # Recreate with a fixed name
         await self.users.create_index(
             "telegram_user_id",
+            name="telegram_user_id_sparse",
             sparse=True,
         )
 
