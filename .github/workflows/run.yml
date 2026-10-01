@@ -1,0 +1,72 @@
+name: Telegram Userbot - 5 Hour Rotation
+
+on:
+  workflow_dispatch:
+  schedule:
+    - cron: "0 */5 * * *"
+
+permissions:
+  contents: read
+
+concurrency:
+  group: telegram-userbot-rotation
+  cancel-in-progress: true
+
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
+    timeout-minutes: 285
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      API_ID: ${{ secrets.API_ID }}
+      API_HASH: ${{ secrets.API_HASH }}
+      MONGO_URI: ${{ secrets.MONGO_URI }}
+      SESSION_ENCRYPTION_KEY: ${{ secrets.SESSION_ENCRYPTION_KEY }}
+      ADMIN_IDS: ${{ secrets.ADMIN_IDS }}
+      TAG_DELAY: ${{ vars.TAG_DELAY || '5' }}
+      TAG_BATCH_SIZE: ${{ vars.TAG_BATCH_SIZE || '5' }}
+      MAX_MEMBERS_PER_TASK: ${{ vars.MAX_MEMBERS_PER_TASK || '5000' }}
+      HEALTH_PORT: "8080"
+      LOG_LEVEL: INFO
+      DATABASE_NAME: telegram_userbot
+      PYTHONUNBUFFERED: "1"
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install
+        run: |
+          python -m pip install --upgrade pip
+          pip install -r requirements.txt
+
+      - name: Validate secrets
+        shell: bash
+        run: |
+          for name in BOT_TOKEN API_ID API_HASH MONGO_URI SESSION_ENCRYPTION_KEY; do
+            test -n "${!name}" || {
+              echo "::error::$name is missing"
+              exit 1
+            }
+          done
+
+      - name: Compile
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: python -m compileall -q .
+
+      - name: Tests
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: pytest -q
+
+      - name: Run bot
+        env:
+          PYTHONPATH: ${{ github.workspace }}
+        run: |
+          echo "Rotation started: $(date -u)"
+          timeout --signal=TERM --kill-after=30s 17100s python bot.py
