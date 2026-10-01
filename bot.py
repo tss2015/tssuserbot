@@ -12,12 +12,12 @@ from config import settings
 from database import db
 from handlers.account import logout, logout_callback, status
 from handlers.admin import admin, broadcast, maintenance, stats, tasks, users
-from handlers.authentication import auth_text, lognum, logsession
+from handlers.authentication import auth_callback, auth_text, cancel_command, lognum, logsession
 from handlers.help import help_command
 from handlers.history import history
 from handlers.mood import game, gm, gn, mood_command, random_mood, set_mood
 from handlers.settings import settings_callback, settings_command
-from handlers.start import start
+from handlers.start import main_menu_callback, start
 from handlers.tagall import cancel, tag_callback, tagall
 from services.health import start_health_server
 from services.mood import MoodManager
@@ -81,7 +81,7 @@ def build_application():
     app.add_handler(CommandHandler("tgallsulky", tagall))
     app.add_handler(CommandHandler("tgallromantic", tagall))
     app.add_handler(CommandHandler("tgallsleepy", tagall))
-    app.add_handler(CommandHandler("cancel", cancel))
+    app.add_handler(CommandHandler("cancel", cancel_command))
     app.add_handler(CommandHandler("logout", logout))
     app.add_handler(CommandHandler("admin", admin))
     app.add_handler(CommandHandler("stats", stats))
@@ -94,10 +94,17 @@ def build_application():
         tag_callback, pattern=r"^tag:(start|cancel)$"
     ))
     app.add_handler(CallbackQueryHandler(
-        logout_callback, pattern=r"^logout:(yes|no)$"
+        logout_callback, pattern=r"^logout:(ask|yes|no)$"
     ))
     app.add_handler(CallbackQueryHandler(
         settings_callback, pattern=r"^setting:(delay_up|delay_down|batch_up|batch_down)$"
+    ))
+    app.add_handler(CallbackQueryHandler(
+        main_menu_callback,
+        pattern=r"^(login:(number|session)|account:status|history|settings|help|back:menu)$",
+    ))
+    app.add_handler(CallbackQueryHandler(
+        auth_callback, pattern=r"^auth:(digit:[0-9]|back|submit|cancel)$"
     ))
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, auth_text))
 
