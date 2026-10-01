@@ -28,24 +28,23 @@ class Database:
         self.events = self.db.events
         self.moods = self.db.moods
 
-        # Remove any old single-field bot_user_id indexes. Older versions
-        # used a plain unique index, which fails when legacy documents contain
-        # multiple null bot_user_id values.
+        # Remove old bot_user_id indexes created by previous versions.
         indexes = await self.users.list_indexes().to_list(length=None)
 
         for index in indexes:
             if index.get("key") == {"bot_user_id": 1}:
                 await self.users.drop_index(index["name"])
 
-        # Enforce uniqueness for real bot_user_id values only.
+        # Enforce uniqueness for real Telegram user IDs only.
+        # Positive Telegram user IDs are indexed; null/missing/invalid
+        # legacy values are not included in this unique index.
         await self.users.create_index(
             "bot_user_id",
             name="bot_user_id_unique",
             unique=True,
             partialFilterExpression={
                 "bot_user_id": {
-                    "$exists": True,
-                    "$ne": None,
+                    "$gt": 0,
                 }
             },
         )
