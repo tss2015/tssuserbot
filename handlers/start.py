@@ -31,11 +31,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 <b>Telegram Userbot Manager</b>",
         "━━━━━━━━━━━━━━━━━━━━",
         "",
-        f"🔐 <b>Account Status</b>",
-        f"{status_text}",
+        "🔐 <b>Account Status</b>",
+        status_text,
         "",
-        f"👤 <b>User</b>",
-        f"{html.escape(str(user_display))}",
+        "👤 <b>User</b>",
+        html.escape(str(user_display)),
         "",
         "🆔 <b>Telegram ID</b>",
         f"<code>{html.escape(str(telegram_user_id))}</code>",
@@ -64,7 +64,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     keyboard = []
 
-    # Login is deliberately only surfaced in private chat.
+    # Login buttons are only shown in private chat.
     if chat and chat.type == "private":
         lines.extend(
             [
@@ -74,6 +74,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "",
             ]
         )
+
         keyboard.append(
             [
                 InlineKeyboardButton(
@@ -140,38 +141,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     ),
                     InlineKeyboardButton(
                         "🚪 Logout",
-                        callback_data="logout:yes",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        "❓ Help & Commands",
-                        callback_data="help",
-                    )
-                ],
-            ]
-        )
-    else:
-        keyboard.extend(
-            [
-                [
-                    InlineKeyboardButton(
-                        "📊 Account Status",
-                        callback_data="account:status",
-                    ),
-                    InlineKeyboardButton(
-                        "📜 Task History",
-                        callback_data="history",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        "⚙️ Settings",
-                        callback_data="settings",
-                    ),
-                    InlineKeyboardButton(
-                        "🚪 Logout",
-                        callback_data="logout:yes",
+                        callback_data="logout:ask",
                     ),
                 ],
                 [
@@ -189,3 +159,80 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode="HTML",
         disable_web_page_preview=True,
     )
+
+
+async def _send_or_edit(
+    update: Update,
+    text: str,
+    reply_markup=None,
+    parse_mode=None,
+):
+    query = update.callback_query
+
+    if query:
+        await query.edit_message_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True,
+        )
+    else:
+        await update.effective_message.reply_text(
+            text,
+            reply_markup=reply_markup,
+            parse_mode=parse_mode,
+            disable_web_page_preview=True,
+        )
+
+
+async def main_menu_callback(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE,
+):
+    query = update.callback_query
+    await query.answer()
+
+    data = query.data
+
+    if data == "login:number":
+        from handlers.authentication import begin_number_button
+
+        await begin_number_button(update, context)
+        return
+
+    if data == "login:session":
+        from handlers.authentication import begin_session_button
+
+        await begin_session_button(update, context)
+        return
+
+    if data == "account:status":
+        from handlers.account import status_callback
+
+        await status_callback(update, context)
+        return
+
+    if data == "history":
+        from handlers.history import history_callback
+
+        await history_callback(update, context)
+        return
+
+    if data == "settings":
+        from handlers.settings import settings_callback_open
+
+        await settings_callback_open(update, context)
+        return
+
+    if data == "help":
+        from handlers.help import help_callback
+
+        await help_callback(update, context)
+        return
+
+    if data == "back:menu":
+        await start(update, context)
+        await query.delete_message()
+        return
+
+    await _send_or_edit(update, "❌ Unknown menu action.")
