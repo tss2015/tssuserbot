@@ -1,5 +1,6 @@
 import asyncio
 
+from cryptography.fernet import InvalidToken
 from telethon import TelegramClient
 from telethon.errors import AuthKeyUnregisteredError, RPCError
 from telethon.sessions import StringSession
@@ -15,12 +16,20 @@ class TelegramClientManager:
 
     async def disconnect(self, bot_user_id):
         client = self.clients.pop(bot_user_id, None)
+
         if client:
             await client.disconnect()
 
-    async def connect_session(self, bot_user_id, session_string, api_id, api_hash):
+    async def connect_session(
+        self,
+        bot_user_id,
+        session_string,
+        api_id,
+        api_hash,
+    ):
         async with self.lock_for(bot_user_id):
             old = self.clients.get(bot_user_id)
+
             if old:
                 await old.disconnect()
 
@@ -32,6 +41,7 @@ class TelegramClientManager:
                 request_retries=2,
                 auto_reconnect=True,
             )
+
             await client.connect()
 
             if not await client.is_user_authorized():
@@ -39,25 +49,56 @@ class TelegramClientManager:
                 raise ValueError("Session is not authorized.")
 
             self.clients[bot_user_id] = client
+
             return client
 
     async def attach_client(self, bot_user_id, client):
         async with self.lock_for(bot_user_id):
             old = self.clients.get(bot_user_id)
+
             if old and old is not client:
                 await old.disconnect()
+
             self.clients[bot_user_id] = client
+
             return client
 
-    async def reconnect_all(self, records, session_manager, api_id, api_hash):
+    async def reconnect_all(
+        self,
+        records,
+        session_manager,
+        api_id,
+        api_hash,
+    ):
         for record in records:
             try:
-                session = session_manager.decrypt(record["encrypted_session"])
-                await self.connect_session(
-                    record["bot_user_id"], session, api_id, api_hash
+                session = session_manager.decrypt(
+                    record["encrypted_session"]
                 )
-            except (AuthKeyUnregisteredError, RPCError, ValueError, OSError):
-                # Recovery should not stop other users from reconnecting.
+
+                await self.connect_session(
+                    record["bot_user_id"],
+                    session,
+                    api_id,
+                    api_hash,
+                )
+
+            except InvalidToken:
+                # This means the stored session was encrypted
+                # with your previous SESSION_ENCRYPTION_KEY.
+                #
+                # Skip that old session so it does not crash
+                # the entire bot during startup.
+                continue
+
+            except (
+                AuthKeyUnregisteredError,
+                RPCError,
+                ValueError,
+                OSError,
+            ):
+                # One invalid/revoked/disconnected session should
+                # not stop other users from reconnecting.
                 continue
 
 
