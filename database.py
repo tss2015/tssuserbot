@@ -12,6 +12,24 @@ class Database:
         self.events = None
         self.moods = None
 
+    async def _reset_index_by_key(self, collection, key, *, name, **options):
+        """Drop any existing index with this key, then recreate it deterministically."""
+        indexes = await collection.list_indexes().to_list(length=None)
+
+        for index in indexes:
+            if index.get("key") == key:
+                existing_name = index.get("name")
+
+                # Never attempt to drop MongoDB's mandatory _id index.
+                if existing_name != "_id":
+                    await collection.drop_index(existing_name)
+
+        await collection.create_index(
+            key,
+            name=name,
+            **options,
+        )
+
     async def connect(self):
         self.client = AsyncIOMotorClient(
             settings.mongo_uri,
@@ -28,16 +46,10 @@ class Database:
         self.events = self.db.events
         self.moods = self.db.moods
 
-        # Remove old bot_user_id indexes
-        indexes = await self.users.list_indexes().to_list(length=None)
-
-        for index in indexes:
-            if index.get("key") == {"bot_user_id": 1}:
-                await self.users.drop_index(index["name"])
-
-        # Unique bot_user_id only for valid positive IDs
-        await self.users.create_index(
-            "bot_user_id",
+        # USERS
+        await self._reset_index_by_key(
+            self.users,
+            {"bot_user_id": 1},
             name="bot_user_id_unique",
             unique=True,
             partialFilterExpression={
@@ -47,34 +59,38 @@ class Database:
             },
         )
 
-        # Remove old telegram_user_id indexes
-        indexes = await self.users.list_indexes().to_list(length=None)
-
-        for index in indexes:
-            if index.get("key") == {"telegram_user_id": 1}:
-                await self.users.drop_index(index["name"])
-
-        # Recreate with a fixed name
-        await self.users.create_index(
-            "telegram_user_id",
+        await self._reset_index_by_key(
+            self.users,
+            {"telegram_user_id": 1},
             name="telegram_user_id_sparse",
             sparse=True,
         )
 
-        await self.tasks.create_index(
-            [("bot_user_id", 1), ("created_at", -1)]
+        # TASKS
+        await self._reset_index_by_key(
+            self.tasks,
+            {"bot_user_id": 1, "created_at": -1},
+            name="bot_user_id_created_at",
         )
 
-        await self.tasks.create_index(
-            [("status", 1), ("created_at", -1)]
+        await self._reset_index_by_key(
+            self.tasks,
+            {"status": 1, "created_at": -1},
+            name="status_created_at",
         )
 
-        await self.events.create_index(
-            [("created_at", -1)]
+        # EVENTS
+        await self._reset_index_by_key(
+            self.events,
+            {"created_at": -1},
+            name="created_at_desc",
         )
 
-        await self.moods.create_index(
-            "scope",
+        # MOODS
+        await self._reset_index_by_key(
+            self.moods,
+            {"scope": 1},
+            name="scope_unique",
             unique=True,
         )
 
