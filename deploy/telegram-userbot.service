@@ -1,0 +1,22 @@
+[Unit]
+Description=Telegram Userbot Manager
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+User=telegrambot
+WorkingDirectory=/opt/telegram-userbot
+EnvironmentFile=/opt/telegram-userbot/.env
+ExecStart=/opt/telegram-userbot/.venv/bin/python /opt/telegram-userbot/bot.py
+Restart=always
+RestartSec=10
+TimeoutStopSec=60
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/opt/telegram-userbot
+
+[Install]
+WantedBy=multi-user.target
