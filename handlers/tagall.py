@@ -213,16 +213,22 @@ async def tagall(
     )
     estimated = len(members) * delay / max(1, batch_size)
 
-    try:
-        ai_text = await groq_mood.generate(
-            mood=mood,
-            instruction=instruction,
-            group_title=chat.title,
-            member_count=len(members),
-        )
-    except Exception as exc:
-        logger.warning("AI mood generation failed: %s", exc)
-        ai_text = mood_service.mood_manager.line(mood)
+    # When the admin provides an explicit message, send that exact text
+    # to every tagged participant. AI generation is only used when no
+    # custom message/instruction was supplied.
+    if instruction:
+        ai_text = instruction
+    else:
+        try:
+            ai_text = await groq_mood.generate(
+                mood=mood,
+                instruction=None,
+                group_title=chat.title,
+                member_count=len(members),
+            )
+        except Exception as exc:
+            logger.warning("AI mood generation failed: %s", exc)
+            ai_text = mood_service.mood_manager.line(mood)
 
     task_id = str(uuid.uuid4())
 
@@ -235,6 +241,7 @@ async def tagall(
             "task_type": "tagall",
             "mood": mood,
             "instruction": instruction,
+            "message_text": ai_text,
             "ai_message": ai_text,
             "status": "QUEUED",
             "total_members": len(members),
