@@ -5,28 +5,50 @@ from config import settings
 from database import db
 
 
-async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    record = await db.users.find_one({"bot_user_id": update.effective_user.id}) or {}
+def _settings_keyboard():
+    return InlineKeyboardMarkup(
+        [
+            [
+                InlineKeyboardButton("🐢 Delay +1s", callback_data="setting:delay_up"),
+                InlineKeyboardButton("⚡ Delay -1s", callback_data="setting:delay_down"),
+            ],
+            [
+                InlineKeyboardButton("📦 Batch +1", callback_data="setting:batch_up"),
+                InlineKeyboardButton("📦 Batch -1", callback_data="setting:batch_down"),
+            ],
+            [
+                InlineKeyboardButton("🏠 Back to Menu", callback_data="back:menu"),
+            ],
+        ]
+    )
+
+
+async def _settings_text(uid: int) -> str:
+    record = await db.users.find_one({"bot_user_id": uid}) or {}
     delay = record.get("tag_delay", settings.tag_delay)
     batch = record.get("tag_batch_size", settings.tag_batch_size)
+    return (
+        "⚙️ <b>Your Settings</b>\n\n"
+        f"Delay: <code>{delay:g}s</code>\n"
+        f"Batch size: <code>{batch}</code>\n\n"
+        "These values remain subject to Telegram's actual rate limits."
+    )
 
-    keyboard = [
-        [
-            InlineKeyboardButton("🐢 Delay +1s", callback_data="setting:delay_up"),
-            InlineKeyboardButton("⚡ Delay -1s", callback_data="setting:delay_down"),
-        ],
-        [
-            InlineKeyboardButton("📦 Batch +1", callback_data="setting:batch_up"),
-            InlineKeyboardButton("📦 Batch -1", callback_data="setting:batch_down"),
-        ],
-    ]
-    await update.message.reply_text(
-        f"⚙️ *Your Settings*\\n\\n"
-        f"Delay: `{delay:g}s`\\n"
-        f"Batch size: `{batch}`\\n\\n"
-        "These values are subject to Telegram's actual rate limits.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode="Markdown",
+
+async def settings_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.effective_message.reply_text(
+        await _settings_text(update.effective_user.id),
+        reply_markup=_settings_keyboard(),
+        parse_mode="HTML",
+    )
+
+
+async def settings_callback_open(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.edit_message_text(
+        await _settings_text(query.from_user.id),
+        reply_markup=_settings_keyboard(),
+        parse_mode="HTML",
     )
 
 
@@ -53,6 +75,7 @@ async def settings_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
         upsert=True,
     )
     await q.edit_message_text(
-        f"⚙️ Settings updated\\n\\nDelay: {delay:g}s\\nBatch size: {batch}",
-        parse_mode="Markdown",
+        await _settings_text(uid),
+        reply_markup=_settings_keyboard(),
+        parse_mode="HTML",
     )
