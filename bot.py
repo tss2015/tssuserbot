@@ -21,6 +21,8 @@ from handlers.admin import admin, broadcast, maintenance, stats, tasks, users
 from handlers.authentication import (
     auth_callback,
     auth_text,
+    begin_number_button,
+    begin_session_button,
     cancel_command,
     lognum,
     logsession,
@@ -44,6 +46,7 @@ from services.scheduled_messages import scheduled_loop
 from services.session_manager import SessionManager
 from services.telegram_client import manager
 
+
 logging.basicConfig(
     level=getattr(
         logging,
@@ -56,101 +59,71 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-async def post_init(app):
-    # =========================================================
-    # TELEGRAM COMMAND MENU
-    # =========================================================
+# ============================================================
+# STARTUP
+# ============================================================
 
-    # Private chat commands:
-    # Only login/account related commands are shown.
+async def post_init(app):
+    # --------------------------------------------------------
+    # Telegram command menu - PRIVATE
+    # --------------------------------------------------------
+
     await app.bot.set_my_commands(
         [
-            BotCommand(
-                "start",
-                "Open the main menu",
-            ),
-            BotCommand(
-                "lognum",
-                "Login with phone number",
-            ),
-            BotCommand(
-                "logsession",
-                "Login with StringSession",
-            ),
-            BotCommand(
-                "status",
-                "Show account status",
-            ),
-            BotCommand(
-                "settings",
-                "Open personal settings",
-            ),
-            BotCommand(
-                "history",
-                "Show task history",
-            ),
-            BotCommand(
-                "logout",
-                "Logout your Telegram account",
-            ),
+            BotCommand("start", "Open the main menu"),
+            BotCommand("lognum", "Login with phone number"),
+            BotCommand("logsession", "Login with StringSession"),
+            BotCommand("status", "Show account status"),
+            BotCommand("settings", "Open personal settings"),
+            BotCommand("history", "Show task history"),
+            BotCommand("logout", "Logout your Telegram account"),
         ],
         scope=BotCommandScopeAllPrivateChats(),
     )
 
-    # Group/supergroup commands:
-    # Only tagging-related commands are shown.
+    # --------------------------------------------------------
+    # Telegram command menu - GROUPS
+    # --------------------------------------------------------
+
     await app.bot.set_my_commands(
         [
-            BotCommand(
-                "tagall",
-                "Tag group members",
-            ),
-            BotCommand(
-                "tagmood",
-                "Tag with selected mood",
-            ),
-            BotCommand(
-                "tgallhappy",
-                "Happy tagging",
-            ),
-            BotCommand(
-                "tgallsassy",
-                "Sassy tagging",
-            ),
-            BotCommand(
-                "tgallsulky",
-                "Sulky tagging",
-            ),
-            BotCommand(
-                "tgallromantic",
-                "Romantic tagging",
-            ),
-            BotCommand(
-                "tgallsleepy",
-                "Sleepy tagging",
-            ),
-            BotCommand(
-                "cancel",
-                "Cancel active tagging task",
-            ),
+            BotCommand("tagall", "Tag group members"),
+            BotCommand("tagmood", "Tag with selected mood"),
+            BotCommand("tgallhappy", "Happy tagging"),
+            BotCommand("tgallsassy", "Sassy tagging"),
+            BotCommand("tgallsulky", "Sulky tagging"),
+            BotCommand("tgallromantic", "Romantic tagging"),
+            BotCommand("tgallsleepy", "Sleepy tagging"),
+            BotCommand("cancel", "Cancel active tagging task"),
         ],
         scope=BotCommandScopeAllGroupChats(),
     )
 
-    # =========================================================
-    # DATABASE / SERVICES INITIALIZATION
-    # =========================================================
+    # --------------------------------------------------------
+    # Database
+    # --------------------------------------------------------
 
     await db.connect()
+
+    # --------------------------------------------------------
+    # Mood service
+    # --------------------------------------------------------
 
     import services.mood as mood_service
 
     mood_service.mood_manager = MoodManager(db)
     mood_service.mood_manager.bind()
 
+    # --------------------------------------------------------
+    # Health server
+    # --------------------------------------------------------
+
     await start_health_server()
 
+    # --------------------------------------------------------
     # Scheduled messages
+    # --------------------------------------------------------
+
     if (
         settings.maintenance is False
         and settings.enable_scheduled_messages
@@ -159,9 +132,9 @@ async def post_init(app):
             scheduled_loop()
         )
 
-    # =========================================================
-    # RECOVER AUTHENTICATED TELEGRAM SESSIONS
-    # =========================================================
+    # --------------------------------------------------------
+    # Recover previously authenticated accounts
+    # --------------------------------------------------------
 
     records = await db.users.find(
         {
@@ -183,26 +156,44 @@ async def post_init(app):
         settings.api_hash,
     )
 
+    logger.info(
+        "Startup completed. Reconnected accounts: %s",
+        len(manager.clients),
+    )
+
+
+# ============================================================
+# SHUTDOWN
+# ============================================================
 
 async def post_shutdown(app):
-    # Disconnect all active Telegram user sessions
+    logger.info("Shutting down Telegram Userbot Manager")
+
+    # Disconnect user Telegram sessions
     for uid in list(manager.clients):
         await manager.disconnect(uid)
 
-    # Close MongoDB
+    # Close database
     await db.close()
 
+    logger.info("Shutdown completed")
+
+
+# ============================================================
+# APPLICATION
+# ============================================================
 
 def build_application():
-    app = Application.builder().token(
-        settings.bot_token
-    ).build()
+    app = (
+        Application.builder()
+        .token(settings.bot_token)
+        .build()
+    )
 
-    # =========================================================
-    # COMMAND HANDLERS
-    # =========================================================
+    # ========================================================
+    # GENERAL COMMANDS
+    # ========================================================
 
-    # General
     app.add_handler(
         CommandHandler(
             "start",
@@ -217,7 +208,10 @@ def build_application():
         )
     )
 
-    # Authentication
+    # ========================================================
+    # AUTHENTICATION COMMANDS
+    # ========================================================
+
     app.add_handler(
         CommandHandler(
             "lognum",
@@ -239,7 +233,10 @@ def build_application():
         )
     )
 
-    # Account
+    # ========================================================
+    # ACCOUNT COMMANDS
+    # ========================================================
+
     app.add_handler(
         CommandHandler(
             "status",
@@ -268,9 +265,9 @@ def build_application():
         )
     )
 
-    # =========================================================
+    # ========================================================
     # MOOD COMMANDS
-    # =========================================================
+    # ========================================================
 
     app.add_handler(
         CommandHandler(
@@ -314,9 +311,9 @@ def build_application():
         )
     )
 
-    # =========================================================
+    # ========================================================
     # TAGGING COMMANDS
-    # =========================================================
+    # ========================================================
 
     app.add_handler(
         CommandHandler(
@@ -367,9 +364,9 @@ def build_application():
         )
     )
 
-    # =========================================================
+    # ========================================================
     # ADMIN COMMANDS
-    # =========================================================
+    # ========================================================
 
     app.add_handler(
         CommandHandler(
@@ -413,11 +410,14 @@ def build_application():
         )
     )
 
-    # =========================================================
-    # CALLBACK QUERY HANDLERS
-    # =========================================================
+    # ========================================================
+    # CALLBACKS
+    # ========================================================
 
-    # Tagging confirmation / cancellation
+    # --------------------------------------------------------
+    # Tagging
+    # --------------------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             tag_callback,
@@ -425,7 +425,10 @@ def build_application():
         )
     )
 
-    # Logout confirmation
+    # --------------------------------------------------------
+    # Logout
+    # --------------------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             logout_callback,
@@ -433,7 +436,10 @@ def build_application():
         )
     )
 
-    # Settings controls
+    # --------------------------------------------------------
+    # Settings
+    # --------------------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             settings_callback,
@@ -441,18 +447,56 @@ def build_application():
         )
     )
 
-    # Main menu
+    # --------------------------------------------------------
+    # LOGIN BUTTONS
+    #
+    # These were missing from the previous callback routing.
+    # --------------------------------------------------------
+
+    app.add_handler(
+        CallbackQueryHandler(
+            begin_number_button,
+            pattern=r"^auth:lognum$",
+        )
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(
+            begin_session_button,
+            pattern=r"^auth:logsession$",
+        )
+    )
+
+    # --------------------------------------------------------
+    # MAIN MENU
+    #
+    # Current start.py uses menu:* callback names.
+    # Keep the older callback names too for compatibility.
+    # --------------------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             main_menu_callback,
             pattern=(
-                r"^(login:(number|session)|account:status|history|"
-                r"settings|help|back:menu)$"
+                r"^(?:"
+                r"menu:(status|settings|history|help|tagall|"
+                r"tgallhappy|tgallsassy|tgallsulky|"
+                r"tgallromantic|tgallsleepy|cancel)|"
+                r"login:(number|session)|"
+                r"account:status|"
+                r"history|"
+                r"settings|"
+                r"help|"
+                r"back:menu"
+                r")$"
             ),
         )
     )
 
-    # Authentication keypad / login callbacks
+    # --------------------------------------------------------
+    # OTP KEYPAD
+    # --------------------------------------------------------
+
     app.add_handler(
         CallbackQueryHandler(
             auth_callback,
@@ -460,9 +504,9 @@ def build_application():
         )
     )
 
-    # =========================================================
-    # AUTHENTICATION TEXT INPUT
-    # =========================================================
+    # ========================================================
+    # TEXT INPUT
+    # ========================================================
 
     app.add_handler(
         MessageHandler(
@@ -471,9 +515,9 @@ def build_application():
         )
     )
 
-    # =========================================================
-    # LIFECYCLE HOOKS
-    # =========================================================
+    # ========================================================
+    # LIFECYCLE
+    # ========================================================
 
     app.post_init = post_init
     app.post_shutdown = post_shutdown
@@ -481,9 +525,9 @@ def build_application():
     return app
 
 
-# =============================================================
+# ============================================================
 # ENTRY POINT
-# =============================================================
+# ============================================================
 
 if __name__ == "__main__":
     logger.info(
