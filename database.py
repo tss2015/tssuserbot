@@ -7,28 +7,11 @@ class Database:
     def __init__(self):
         self.client = None
         self.db = None
+
         self.users = None
         self.tasks = None
         self.events = None
         self.moods = None
-
-    async def _reset_index_by_key(self, collection, key, *, name, **options):
-        """Drop any existing index with this key, then recreate it deterministically."""
-        indexes = await collection.list_indexes().to_list(length=None)
-
-        for index in indexes:
-            if index.get("key") == key:
-                existing_name = index.get("name")
-
-                # Never attempt to drop MongoDB's mandatory _id index.
-                if existing_name != "_id":
-                    await collection.drop_index(existing_name)
-
-        await collection.create_index(
-            key,
-            name=name,
-            **options,
-        )
 
     async def connect(self):
         self.client = AsyncIOMotorClient(
@@ -39,58 +22,145 @@ class Database:
 
         await self.client.admin.command("ping")
 
-        self.db = self.client[settings.database_name]
+        self.db = self.client[
+            settings.database_name
+        ]
 
         self.users = self.db.users
         self.tasks = self.db.tasks
         self.events = self.db.events
         self.moods = self.db.moods
 
-        # USERS
-        await self._reset_index_by_key(
-            self.users,
-            {"bot_user_id": 1},
+        # ====================================================
+        # USERS INDEX CLEANUP
+        # ====================================================
+        #
+        # Old versions of the project may have created:
+        #
+        #   user_id_1
+        #   bot_user_id_1
+        #   telegram_user_id_1
+        #
+        # Some of those indexes are unique and can fail when
+        # older documents contain null values.
+        #
+        # Remove only indexes by their actual indexed field.
+        # ====================================================
+
+        indexes = await self.users.list_indexes().to_list(
+            length=None
+        )
+
+        for index in indexes:
+            index_name = index.get("name")
+            key = index.get("key")
+
+            # ------------------------------------------------
+            # Remove obsolete user_id indexes.
+            # ------------------------------------------------
+
+            if key == {"user_id": 1}:
+                await self.users.drop_index(
+                    index_name
+                )
+
+            # ------------------------------------------------
+            # Remove old bot_user_id indexes.
+            # They will be recreated correctly below.
+            # ------------------------------------------------
+
+            elif key == {"bot_user_id": 1}:
+                await self.users.drop_index(
+                    index_name
+                )
+
+            # ------------------------------------------------
+            # Remove old telegram_user_id indexes.
+            # They will be recreated as sparse below.
+            # ------------------------------------------------
+
+            elif key == {"telegram_user_id": 1}:
+                await self.users.drop_index(
+                    index_name
+                )
+
+        # ====================================================
+        # CORRECT BOT USER INDEX
+        # ====================================================
+        #
+        # bot_user_id is the Telegram ID of the person using
+        # the CONTROL BOT.
+        #
+        # Only positive IDs are indexed.
+        #
+        # Therefore null/missing legacy documents do not
+        # collide with the unique index.
+        # ====================================================
+
+        await self.users.create_index(
+            "bot_user_id",
             name="bot_user_id_unique",
             unique=True,
             partialFilterExpression={
                 "bot_user_id": {
-                    "$gt": 0,
+                    "$gt": 0
                 }
             },
         )
 
-        await self._reset_index_by_key(
-            self.users,
-            {"telegram_user_id": 1},
+        # ====================================================
+        # TELEGRAM ACCOUNT INDEX
+        # ====================================================
+        #
+        # Multiple legacy records may not have this field.
+        # Sparse prevents null/missing values from creating
+        # an unwanted uniqueness conflict.
+        # ====================================================
+
+        await self.users.create_index(
+            "telegram_user_id",
             name="telegram_user_id_sparse",
             sparse=True,
         )
 
-        # TASKS
-        await self._reset_index_by_key(
-            self.tasks,
-            {"bot_user_id": 1, "created_at": -1},
+        # ====================================================
+        # TASK INDEXES
+        # ====================================================
+
+        await self.tasks.create_index(
+            [
+                ("bot_user_id", 1),
+                ("created_at", -1),
+            ],
             name="bot_user_id_created_at",
         )
 
-        await self._reset_index_by_key(
-            self.tasks,
-            {"status": 1, "created_at": -1},
+        await self.tasks.create_index(
+            [
+                ("status", 1),
+                ("created_at", -1),
+            ],
             name="status_created_at",
         )
 
-        # EVENTS
-        await self._reset_index_by_key(
-            self.events,
-            {"created_at": -1},
-            name="created_at_desc",
+        # ====================================================
+        # EVENT INDEX
+        # ====================================================
+
+        await self.events.create_index(
+            [
+                ("created_at", -1),
+            ],
+            name="events_created_at",
         )
 
-        # MOODS
-        await self._reset_index_by_key(
-            self.moods,
-            {"scope": 1},
-            name="scope_unique",
+        # ====================================================
+        # MOOD INDEX
+        # ====================================================
+
+        await self.moods.create_index(
+            "scope",
+            name="mood_scope_unique",
             unique=True,
         )
 
@@ -100,20 +170,22 @@ class Database:
 
     async def log_event(
         self,
-        name: str,
+        name,
         bot_user_id=None,
         **fields,
     ):
         from utils.helpers import utcnow
 
-        doc = {
+        document = {
             "name": name,
             "bot_user_id": bot_user_id,
             "fields": fields,
             "created_at": utcnow(),
         }
 
-        await self.events.insert_one(doc)
+        await self.events.insert_one(
+            document
+        )
 
 
 db = Database()
