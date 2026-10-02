@@ -43,13 +43,15 @@ def _parse_request(
 
     Supported forms:
       /tagall
-      /tagall romantic ...
-      /tagmood romantic ...
-      /tgallhappy ...
-      /tgallsassy ...
-      /tgallsulky ...
-      /tgallromantic ...
-      /tgallsleepy ...
+      /tagall romantic
+      /tagall romantic hello everyone
+      /tagmood romantic
+      /tagmood romantic hello
+      /tgallhappy
+      /tgallsassy
+      /tgallsulky
+      /tgallromantic
+      /tgallsleepy
     """
     args = list(context.args or [])
 
@@ -57,6 +59,7 @@ def _parse_request(
     text = message.text if message else ""
 
     command = ""
+
     if text:
         command = text.strip().split()[0].split("@", 1)[0].lower()
 
@@ -64,6 +67,7 @@ def _parse_request(
 
     if command.startswith("/tgall"):
         alias_mood = command.removeprefix("/tgall")
+
     elif command == "/tagmood":
         alias_mood = ""
 
@@ -81,7 +85,10 @@ async def _is_group_admin(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ) -> bool:
-    if not update.effective_chat or update.effective_chat.type not in (
+    if not update.effective_chat:
+        return False
+
+    if update.effective_chat.type not in (
         "group",
         "supergroup",
     ):
@@ -93,7 +100,10 @@ async def _is_group_admin(
             update.effective_user.id,
         )
 
-        return member.status in ("administrator", "creator")
+        return member.status in (
+            "administrator",
+            "creator",
+        )
 
     except TelegramError:
         return False
@@ -120,7 +130,8 @@ async def _login_required(
         if update.effective_message:
             await update.effective_message.reply_text(
                 "🔐 Your Telegram account is not connected. "
-                "Open the bot in private chat and use /lognum or /logsession."
+                "Open the bot in private chat and use "
+                "/lognum or /logsession."
             )
 
 
@@ -131,52 +142,44 @@ async def _generate_unique_mood_message(
     member_count: int,
     used_messages: set[str],
 ) -> str:
-    """Generate a fresh AI message for one individual participant.
+    """Generate a fresh mood message for one participant."""
 
-    This function is used only for mood-based tagging.
-
-    The recipient's name and a uniqueness hint are supplied to the AI
-    so that each participant gets a fresh message rather than one
-    message being reused for the whole task.
-    """
     member_name = (
         getattr(member, "first_name", None)
         or getattr(member, "username", None)
         or "friend"
     )
 
-    previous_messages = list(used_messages)[-5:]
+    recent_messages = list(used_messages)[-5:]
 
-    if previous_messages:
-        previous_text = "\n".join(
-            f"- {message}" for message in previous_messages
+    if recent_messages:
+        previous_messages = "\n".join(
+            f"- {message}"
+            for message in recent_messages
         )
     else:
-        previous_text = "- None"
+        previous_messages = "- None"
 
-    uniqueness_prompt = (
-        f"Create one fresh, unique {mood} message for Telegram "
-        f"recipient '{member_name}'.\n\n"
-        "The message is going to be sent directly to this individual "
-        "inside a group.\n"
-        "Make it natural, concise, and appropriate for Telegram.\n"
-        "Do not mention that you are an AI.\n"
-        "Do not mention this instruction.\n"
-        "Do not copy any previous message.\n"
-        "The wording must be different from messages already generated "
-        "for other participants.\n\n"
+    instruction = (
+        f"Create one fresh and unique {mood} message "
+        f"for the Telegram user named {member_name}.\n\n"
+        "Keep the message natural, concise and suitable "
+        "for a Telegram group.\n"
+        "Do not mention AI.\n"
+        "Do not mention prompts or instructions.\n"
+        "Do not copy any previously generated message.\n"
+        "Use different wording from the previous messages.\n\n"
         f"Group: {group_title or 'Telegram group'}\n"
         f"Eligible members: {member_count}\n\n"
         "Previously generated messages:\n"
-        f"{previous_text}"
+        f"{previous_messages}"
     )
 
-    # Try more than once if the model happens to return the same text.
     for attempt in range(3):
         try:
             generated = await groq_mood.generate(
                 mood=mood,
-                instruction=uniqueness_prompt,
+                instruction=instruction,
                 group_title=group_title,
                 member_count=member_count,
             )
@@ -186,70 +189,83 @@ async def _generate_unique_mood_message(
             if not generated:
                 continue
 
-            normalized = generated.casefold()
+            existing = {
+                value.casefold()
+                for value in used_messages
+            }
 
-            if normalized not in {
-                message.casefold() for message in used_messages
-            }:
+            if generated.casefold() not in existing:
                 used_messages.add(generated)
                 return generated
 
-            # Tell the next attempt explicitly that duplication occurred.
-            uniqueness_prompt += (
-                f"\n\nAttempt {attempt + 1} was already used. "
-                "Generate substantially different wording."
+            instruction += (
+                "\n\nThe previous response duplicated an existing "
+                "message. Generate substantially different wording."
             )
 
         except Exception as exc:
             logger.warning(
-                "AI mood generation failed for member=%s attempt=%s: %s",
+                "AI mood generation failed for member=%s "
+                "attempt=%s: %s",
                 getattr(member, "id", "?"),
                 attempt + 1,
                 exc,
             )
 
-    # Local fallback.
-    fallback = mood_service.mood_manager.line(mood)
-    fallback = (fallback or "").strip()
+    # Local fallback if AI generation fails.
+    fallback = (
+        mood_service.mood_manager.line(mood) or ""
+    ).strip()
+
+    existing = {
+        value.casefold()
+        for value in used_messages
+    }
+
+    if fallback and fallback.casefold() not in existing:
+        used_messages.add(fallback)
+        return fallback
 
     if fallback:
-        normalized = fallback.casefold()
+        unique_fallback = (
+            f"{fallback} — {member_name}"
+        )
+    else:
+        unique_fallback = (
+            f"Hey {member_name}, just checking in! 😊"
+        )
 
-        if normalized not in {
-            message.casefold() for message in used_messages
-        }:
-            used_messages.add(fallback)
-            return fallback
+    used_messages.add(unique_fallback)
 
-        # Make the fallback distinct while keeping it natural.
-        unique_fallback = f"{fallback} — {member_name}"
-        used_messages.add(unique_fallback)
-        return unique_fallback
-
-    # Final guaranteed-different fallback.
-    final_fallback = f"Hey {member_name}, just checking in! 😊"
-    used_messages.add(final_fallback)
-
-    return final_fallback
+    return unique_fallback
 
 
 async def tagall(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    if not update.effective_user or not update.effective_chat:
+    if not update.effective_user:
+        return
+
+    if not update.effective_chat:
         return
 
     uid = update.effective_user.id
     chat = update.effective_chat
 
-    if chat.type not in ("group", "supergroup"):
+    if chat.type not in (
+        "group",
+        "supergroup",
+    ):
         await update.effective_message.reply_text(
             "❌ Tagging only works in a group or supergroup."
         )
         return
 
-    if not await _is_group_admin(update, context):
+    if not await _is_group_admin(
+        update,
+        context,
+    ):
         await update.effective_message.reply_text(
             "❌ Only group admins can use user tagging."
         )
@@ -258,19 +274,29 @@ async def tagall(
     client = manager.clients.get(uid)
 
     if not client:
-        await _login_required(update, context)
+        await _login_required(
+            update,
+            context,
+        )
         return
 
-    # Reconnect the user's own Telegram session if necessary.
+    # Reconnect the user's own Telegram session.
     try:
         if not client.is_connected():
             await client.connect()
 
         if not await client.is_user_authorized():
-            await _login_required(update, context)
+            await _login_required(
+                update,
+                context,
+            )
             return
 
-    except (RPCError, OSError, ValueError) as exc:
+    except (
+        RPCError,
+        OSError,
+        ValueError,
+    ) as exc:
         logger.warning(
             "User session unavailable for %s: %s",
             uid,
@@ -285,11 +311,15 @@ async def tagall(
 
     if task_manager.get(uid):
         await update.effective_message.reply_text(
-            "⚠️ You already have an active task. Use /cancel first."
+            "⚠️ You already have an active task. "
+            "Use /cancel first."
         )
         return
 
-    mood, instruction = _parse_request(update, context)
+    mood, instruction = _parse_request(
+        update,
+        context,
+    )
 
     if mood is None:
         mood = await mood_service.mood_manager.activity_shift(
@@ -309,7 +339,11 @@ async def tagall(
             max_members,
         )
 
-    except (RPCError, OSError, ValueError) as exc:
+    except (
+        RPCError,
+        OSError,
+        ValueError,
+    ) as exc:
         logger.warning(
             "Member collection failed for user=%s chat=%s: %s",
             uid,
@@ -318,9 +352,10 @@ async def tagall(
         )
 
         await update.effective_message.reply_text(
-            "❌ I could not read the group members with your connected "
-            "Telegram account.\n\n"
-            "Make sure that account is a member of this group and try again."
+            "❌ I could not read the group members with your "
+            "connected Telegram account.\n\n"
+            "Make sure that account is a member of this group "
+            "and try again."
         )
         return
 
@@ -354,11 +389,12 @@ async def tagall(
     )
 
     # ---------------------------------------------------------
-    # IMPORTANT:
-    # Custom messages remain exactly the same for everyone.
+    # CUSTOM MESSAGE MODE
     #
-    # Mood-only messages must be generated individually.
-    # Therefore mood mode sends one participant per message.
+    # /tagall plz join vc
+    #
+    # Exact custom message is sent to everyone.
+    # No AI rewriting.
     # ---------------------------------------------------------
     custom_message_mode = bool(instruction)
 
@@ -366,26 +402,25 @@ async def tagall(
         effective_batch_size = batch_size
         preview_message = instruction
 
+    # ---------------------------------------------------------
+    # MOOD MODE
+    #
+    # One participant per message is required because each
+    # participant must receive a different AI-generated message.
+    # ---------------------------------------------------------
     else:
         effective_batch_size = 1
+
         preview_message = (
-            f"🤖 A unique {mood} AI message will be generated "
+            f"A unique {mood} AI message will be generated "
             "for each participant."
         )
 
     estimated = (
-        len(members) * delay / max(1, effective_batch_size)
+        len(members)
+        * delay
+        / max(1, effective_batch_size)
     )
-
-    # For custom messages, preserve the exact supplied text.
-    #
-    # For mood mode, we do NOT generate the final AI text here.
-    # It will be generated separately inside run_tagging() for
-    # each participant.
-    if custom_message_mode:
-        ai_text = instruction
-    else:
-        ai_text = None
 
     task_id = str(uuid.uuid4())
 
@@ -398,8 +433,16 @@ async def tagall(
             "task_type": "tagall",
             "mood": mood,
             "instruction": instruction,
-            "message_text": ai_text,
-            "ai_message": ai_text,
+            "message_text": (
+                instruction
+                if custom_message_mode
+                else None
+            ),
+            "ai_message": (
+                instruction
+                if custom_message_mode
+                else None
+            ),
             "unique_per_member": not custom_message_mode,
             "status": "QUEUED",
             "total_members": len(members),
@@ -413,11 +456,12 @@ async def tagall(
     context.user_data["pending_tag"] = (
         task_id,
         chat.id,
+        chat.title,
         members,
         delay,
         effective_batch_size,
         mood,
-        ai_text,
+        instruction,
         custom_message_mode,
     )
 
@@ -435,12 +479,27 @@ async def tagall(
     ]
 
     if custom_message_mode:
-        message_preview = html.escape(preview_message)
-    else:
-        message_preview = html.escape(preview_message)
+        message_preview = html.escape(
+            instruction
+        )
 
-    await update.effective_message.reply_text(
-        f"🤖 <b>AI Tagging Preview</b>\n\n"
+        mode_text = (
+            "📝 <b>Your custom message will be sent "
+            "exactly as entered.</b>"
+        )
+
+    else:
+        message_preview = html.escape(
+            preview_message
+        )
+
+        mode_text = (
+            "✨ <b>Each participant will receive a "
+            "different AI-generated message.</b>"
+        )
+
+    preview = (
+        "🤖 <b>AI Tagging Preview</b>\n\n"
         f"🎭 <b>Mood:</b> {html.escape(mood)}\n"
         f"💬 <b>Message:</b> {message_preview}\n\n"
         f"👥 <b>Group:</b> "
@@ -452,15 +511,15 @@ async def tagall(
         f"{html.escape(human_seconds(estimated))}\n\n"
         "📱 Messages will be sent from "
         "<b>your connected Telegram account</b>.\n"
-        (
-            "✨ <b>Each participant will receive a different "
-            "AI-generated message.</b>\n"
-            if not custom_message_mode
-            else
-            "📝 <b>Your custom message will be sent exactly as entered.</b>\n"
-        )
-        "🛡️ Telegram FloodWait/rate limits are respected.",
-        reply_markup=InlineKeyboardMarkup(keyboard),
+        f"{mode_text}\n"
+        "🛡️ Telegram FloodWait/rate limits are respected."
+    )
+
+    await update.effective_message.reply_text(
+        preview,
+        reply_markup=InlineKeyboardMarkup(
+            keyboard
+        ),
         parse_mode="HTML",
     )
 
@@ -476,7 +535,10 @@ async def tag_callback(
     uid = query.from_user.id
 
     if query.data == "tag:cancel":
-        context.user_data.pop("pending_tag", None)
+        context.user_data.pop(
+            "pending_tag",
+            None,
+        )
 
         await query.edit_message_text(
             "❌ Tag operation cancelled."
@@ -496,18 +558,20 @@ async def tag_callback(
 
     if not pending:
         await query.edit_message_text(
-            "⌛ This operation has expired. Run /tagall again."
+            "⌛ This operation has expired. "
+            "Run /tagall again."
         )
         return
 
     (
         task_id,
         chat_id,
+        chat_title,
         members,
         delay,
         batch_size,
         mood,
-        ai_text,
+        instruction,
         custom_message_mode,
     ) = pending
 
@@ -531,7 +595,11 @@ async def tag_callback(
             )
             return
 
-    except (RPCError, OSError, ValueError):
+    except (
+        RPCError,
+        OSError,
+        ValueError,
+    ):
         await query.edit_message_text(
             "🔐 Your Telegram session is unavailable. "
             "Please login again."
@@ -554,7 +622,8 @@ async def tag_callback(
             delay,
             batch_size,
             mood,
-            ai_text,
+            chat_title,
+            instruction,
             custom_message_mode,
         )
     )
@@ -567,7 +636,8 @@ async def run_tagging(
     delay,
     batch_size,
     mood,
-    ai_text,
+    chat_title,
+    instruction,
     custom_message_mode,
 ):
     uid = item.bot_user_id
@@ -579,8 +649,7 @@ async def run_tagging(
     flood_wait_count = 0
     total = len(members)
 
-    # Keeps track of generated AI messages so the same message
-    # is not intentionally reused for multiple participants.
+    # Used to avoid intentionally reusing AI-generated messages.
     used_messages: set[str] = set()
 
     await db.tasks.update_one(
@@ -634,130 +703,126 @@ async def run_tagging(
                 )
                 return
 
-            try:
-                await limiter.wait(
-                    f"{uid}:{item.chat_id}",
-                    delay,
-                )
+            # -------------------------------------------------
+            # Generate the message ONCE for this batch.
+            #
+            # Mood mode has batch_size=1, therefore each
+            # participant gets a separate AI-generated message.
+            #
+            # Custom mode keeps the exact original message.
+            # -------------------------------------------------
+            if custom_message_mode:
+                message_text = instruction
 
-                # -------------------------------------------------
-                # CUSTOM MESSAGE MODE
-                #
-                # Example:
-                # /tagall plz join vc
-                #
-                # The exact supplied text is used.
-                # -------------------------------------------------
-                if custom_message_mode:
-                    message_text = ai_text
+            else:
+                member = batch[0]
 
-                # -------------------------------------------------
-                # MOOD MODE
-                #
-                # Each batch contains exactly one participant
-                # because tagall() sets batch_size=1 for mood mode.
-                #
-                # A fresh AI message is generated specifically
-                # for this participant.
-                # -------------------------------------------------
-                else:
-                    member = batch[0]
-
-                    message_text = (
-                        await _generate_unique_mood_message(
-                            mood=mood,
-                            member=member,
-                            group_title=None,
-                            member_count=total,
-                            used_messages=used_messages,
-                        )
+                message_text = (
+                    await _generate_unique_mood_message(
+                        mood=mood,
+                        member=member,
+                        group_title=chat_title,
+                        member_count=total,
+                        used_messages=used_messages,
                     )
-
-                    # Save the most recently generated message.
-                    await db.tasks.update_one(
-                        {"task_id": item.task_id},
-                        {
-                            "$set": {
-                                "last_ai_message": message_text,
-                            }
-                        },
-                    )
-
-                mentions = " ".join(
-                    mention(user)
-                    for user in batch
                 )
-
-                payload = (
-                    f"{html.escape(message_text)}\n\n"
-                    f"{mentions}"
-                )
-
-                await client.send_message(
-                    item.chat_id,
-                    payload,
-                    link_preview=False,
-                    parse_mode="html",
-                )
-
-                sent += len(batch)
-
-            except FloodWaitError as exc:
-                flood_wait_count += 1
 
                 await db.tasks.update_one(
                     {"task_id": item.task_id},
                     {
                         "$set": {
-                            "status": "FLOOD_WAIT",
-                            "flood_wait_seconds": exc.seconds,
-                            "processed_members": processed,
-                            "successful": sent,
-                            "failed": failed,
+                            "last_ai_message": message_text,
                         }
                     },
                 )
 
-                await query.edit_message_text(
-                    "⏸️ <b>Telegram FloodWait</b>\n\n"
-                    "Telegram requested a pause of "
-                    f"<b>{exc.seconds}s</b>.\n"
-                    f"Processed: {processed}/{total}\n\n"
-                    "The task will wait for Telegram's requested "
-                    "period before attempting to continue.",
-                    parse_mode="HTML",
-                )
+            while True:
+                try:
+                    await limiter.wait(
+                        f"{uid}:{item.chat_id}",
+                        delay,
+                    )
 
-                # Respect Telegram's requested delay.
-                await asyncio.sleep(
-                    exc.seconds
-                )
+                    mentions = " ".join(
+                        mention(user)
+                        for user in batch
+                    )
 
-                if flood_wait_count >= 2:
+                    payload = (
+                        f"{html.escape(message_text)}\n\n"
+                        f"{mentions}"
+                    )
+
+                    await client.send_message(
+                        item.chat_id,
+                        payload,
+                        link_preview=False,
+                        parse_mode="html",
+                    )
+
+                    sent += len(batch)
+                    break
+
+                except FloodWaitError as exc:
+                    flood_wait_count += 1
+
+                    await db.tasks.update_one(
+                        {"task_id": item.task_id},
+                        {
+                            "$set": {
+                                "status": "FLOOD_WAIT",
+                                "flood_wait_seconds": exc.seconds,
+                                "processed_members": processed,
+                                "successful": sent,
+                                "failed": failed,
+                            }
+                        },
+                    )
+
                     await query.edit_message_text(
-                        "🛑 <b>Tagging stopped after "
-                        "repeated FloodWait.</b>\n\n"
-                        f"Processed: {processed}/{total}\n"
-                        f"✅ Sent: {sent}\n"
-                        f"❌ Failed: {failed}",
+                        "⏸️ <b>Telegram FloodWait</b>\n\n"
+                        "Telegram requested a pause of "
+                        f"<b>{exc.seconds}s</b>.\n"
+                        f"Processed: {processed}/{total}\n\n"
+                        "The task will wait for Telegram's requested "
+                        "period before attempting to continue.",
                         parse_mode="HTML",
                     )
-                    return
 
-                # Retry the same participant/batch.
-                continue
+                    await asyncio.sleep(
+                        exc.seconds
+                    )
 
-            except (RPCError, OSError, ValueError) as exc:
-                failed += len(batch)
+                    if flood_wait_count >= 2:
+                        await query.edit_message_text(
+                            "🛑 <b>Tagging stopped after "
+                            "repeated FloodWait.</b>\n\n"
+                            f"Processed: {processed}/{total}\n"
+                            f"✅ Sent: {sent}\n"
+                            f"❌ Failed: {failed}",
+                            parse_mode="HTML",
+                        )
+                        return
 
-                logger.warning(
-                    "Tag send failed: "
-                    "user=%s chat=%s batch=%s error=%s",
-                    uid,
-                    item.chat_id,
-                    len(batch),
-                    exc,
-                )
+                    # Retry the SAME generated message.
+                    continue
+
+                except (
+                    RPCError,
+                    OSError,
+                    ValueError,
+                ) as exc:
+                    failed += len(batch)
+
+                    logger.warning(
+                        "Tag send failed: "
+                        "user=%s chat=%s batch=%s error=%s",
+                        uid,
+                        item.chat_id,
+                        len(batch),
+                        exc,
+                    )
+                    break
 
             processed += len(batch)
 
@@ -772,11 +837,23 @@ async def run_tagging(
                 },
             )
 
-            if processed == total or processed % max(
-                batch_size * 5,
-                10,
-            ) == 0:
-                await query.edit_message_text(
+            if (
+                processed == total
+                or processed % max(
+                    batch_size * 5,
+                    10,
+                ) == 0
+            ):
+                if custom_message_mode:
+                    mode_status = (
+                        "📝 Exact custom message"
+                    )
+                else:
+                    mode_status = (
+                        "✨ Unique AI message per participant"
+                    )
+
+                progress = (
                     "📢 <b>AI tagging in progress</b>\n\n"
                     f"🎭 Mood: "
                     f"<code>{html.escape(mood)}</code>\n"
@@ -784,12 +861,11 @@ async def run_tagging(
                     f"✅ Sent: {sent}\n"
                     f"❌ Failed: {failed}\n"
                     f"⏱️ Delay: {delay:g}s\n"
-                    (
-                        "✨ Unique AI message per participant"
-                        if not custom_message_mode
-                        else
-                        "📝 Exact custom message"
-                    ),
+                    f"{mode_status}"
+                )
+
+                await query.edit_message_text(
+                    progress,
                     parse_mode="HTML",
                 )
 
@@ -806,19 +882,28 @@ async def run_tagging(
             },
         )
 
-        await query.edit_message_text(
+        if custom_message_mode:
+            completion_mode = (
+                "📝 Your custom message was sent "
+                "exactly as entered."
+            )
+        else:
+            completion_mode = (
+                "✨ Every participant received a "
+                "unique AI-generated message."
+            )
+
+        completion = (
             "✅ <b>AI tagging completed</b>\n\n"
             f"🎭 Mood: {html.escape(mood)}\n"
             f"📊 Processed: {processed}\n"
             f"✅ Sent: {sent}\n"
             f"❌ Failed: {failed}\n\n"
-            (
-                "✨ Every participant received a unique "
-                "AI-generated message."
-                if not custom_message_mode
-                else
-                "📝 Your custom message was sent exactly as entered."
-            ),
+            f"{completion_mode}"
+        )
+
+        await query.edit_message_text(
+            completion,
             parse_mode="HTML",
         )
 
