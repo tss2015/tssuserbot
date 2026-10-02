@@ -4,181 +4,168 @@ from telegram.ext import ContextTypes
 from database import db
 
 
-def _main_menu_keyboard(private: bool = True):
-    if private:
-        return InlineKeyboardMarkup(
+# ============================================================
+# MAIN MENU
+# ============================================================
+
+def _main_menu_keyboard(
+    authenticated: bool,
+) -> InlineKeyboardMarkup:
+    keyboard = []
+
+    # --------------------------------------------------------
+    # Account section
+    # --------------------------------------------------------
+
+    if authenticated:
+        keyboard.append(
             [
-                [
-                    InlineKeyboardButton(
-                        "🔐 Login with Number",
-                        callback_data="auth:lognum",
-                    ),
-                    InlineKeyboardButton(
-                        "🔑 Login with Session",
-                        callback_data="auth:logsession",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        "📊 Status",
-                        callback_data="menu:status",
-                    ),
-                    InlineKeyboardButton(
-                        "⚙️ Settings",
-                        callback_data="menu:settings",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        "📜 History",
-                        callback_data="menu:history",
-                    ),
-                    InlineKeyboardButton(
-                        "🚪 Logout",
-                        callback_data="logout:confirm",
-                    ),
-                ],
-                [
-                    InlineKeyboardButton(
-                        "❓ Help",
-                        callback_data="menu:help",
-                    ),
-                ],
+                InlineKeyboardButton(
+                    "📊 Account Status",
+                    callback_data="menu:status",
+                ),
+                InlineKeyboardButton(
+                    "⚙️ Settings",
+                    callback_data="menu:settings",
+                ),
             ]
         )
 
-    return InlineKeyboardMarkup(
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "📜 History",
+                    callback_data="menu:history",
+                ),
+                InlineKeyboardButton(
+                    "🚪 Logout",
+                    callback_data="logout:ask",
+                ),
+            ]
+        )
+
+    else:
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "📱 Login with Number",
+                    callback_data="auth:lognum",
+                )
+            ]
+        )
+
+        keyboard.append(
+            [
+                InlineKeyboardButton(
+                    "🔑 Login with Session",
+                    callback_data="auth:logsession",
+                )
+            ]
+        )
+
+    # --------------------------------------------------------
+    # Help
+    # --------------------------------------------------------
+
+    keyboard.append(
         [
-            [
-                InlineKeyboardButton(
-                    "📢 Tag All",
-                    callback_data="menu:tagall",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "😊 Happy",
-                    callback_data="menu:tgallhappy",
-                ),
-                InlineKeyboardButton(
-                    "😎 Sassy",
-                    callback_data="menu:tgallsassy",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "🥺 Sulky",
-                    callback_data="menu:tgallsulky",
-                ),
-                InlineKeyboardButton(
-                    "❤️ Romantic",
-                    callback_data="menu:tgallromantic",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "😴 Sleepy",
-                    callback_data="menu:tgallsleepy",
-                ),
-            ],
-            [
-                InlineKeyboardButton(
-                    "❌ Cancel",
-                    callback_data="menu:cancel",
-                ),
-            ],
+            InlineKeyboardButton(
+                "❓ Help",
+                callback_data="menu:help",
+            )
         ]
     )
 
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============================================================
+# START
+# ============================================================
 
 async def start(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    if not update.effective_user:
+    user = update.effective_user
+
+    if not user:
         return
 
-    if not update.effective_chat:
+    # --------------------------------------------------------
+    # Start is intended for private account management.
+    # --------------------------------------------------------
+
+    if update.effective_chat.type != "private":
+        await update.effective_message.reply_text(
+            "ℹ️ Please open my private chat and use /start there."
+        )
         return
 
-    user_id = update.effective_user.id
-    chat_type = update.effective_chat.type
+    record = await db.users.find_one(
+        {
+            "bot_user_id": user.id,
+            "authenticated": True,
+        }
+    )
 
-    if chat_type == "private":
-        record = await db.users.find_one(
-            {"bot_user_id": user_id}
+    authenticated = bool(record)
+
+    if authenticated:
+        telegram_id = record.get(
+            "telegram_user_id",
+            "-",
         )
 
-        connected = bool(record)
+        username = record.get(
+            "username"
+        )
 
-        if connected:
-            account_status = "🟢 Connected"
-        else:
-            account_status = "🔴 Not connected"
+        account_name = (
+            f"@{username}"
+            if username
+            else record.get(
+                "first_name",
+                "Connected account",
+            )
+        )
 
         text = (
             "🤖 <b>Telegram Userbot Manager</b>\n\n"
             "━━━━━━━━━━━━━━━━━━━━\n"
-            f"👤 <b>User:</b> "
-            f"{update.effective_user.first_name or 'User'}\n"
-            f"🆔 <b>ID:</b> <code>{user_id}</code>\n"
-            f"🔐 <b>Account:</b> {account_status}\n"
+            "🔐 <b>Account:</b> Connected\n"
+            f"👤 <b>User:</b> {account_name}\n"
+            f"🆔 <b>ID:</b> <code>{telegram_id}</code>\n"
             "━━━━━━━━━━━━━━━━━━━━\n\n"
-            "✨ <b>Available Features</b>\n\n"
-            "🔐 Login with Number\n"
-            "🔑 Login with StringSession\n"
-            "📊 Account Status\n"
-            "⚙️ Settings\n"
-            "📜 Task History\n"
-            "🚪 Logout\n\n"
-            "Use the buttons below or the available commands."
+            "Choose an option below."
         )
 
-        await update.effective_message.reply_text(
-            text,
-            reply_markup=_main_menu_keyboard(
-                private=True
-            ),
-            parse_mode="HTML",
+    else:
+        text = (
+            "🤖 <b>Telegram Userbot Manager</b>\n\n"
+            "━━━━━━━━━━━━━━━━━━━━\n"
+            "🔐 <b>Account:</b> Not connected\n"
+            "━━━━━━━━━━━━━━━━━━━━\n\n"
+            "📱 Login with your Telegram number or\n"
+            "🔑 provide an existing Telethon StringSession.\n\n"
+            "Choose an option below."
         )
-
-        return
-
-    # ---------------------------------------------------------
-    # GROUP START
-    # ---------------------------------------------------------
-
-    text = (
-        "🤖 <b>Telegram Userbot Manager</b>\n\n"
-        "📢 <b>Group Tagging</b>\n\n"
-        "Use the tagging commands below.\n\n"
-        "• <code>/tagall</code>\n"
-        "• <code>/tagall romantic</code>\n"
-        "• <code>/tagmood romantic</code>\n"
-        "• <code>/tgallhappy</code>\n"
-        "• <code>/tgallsassy</code>\n"
-        "• <code>/tgallsulky</code>\n"
-        "• <code>/tgallromantic</code>\n"
-        "• <code>/tgallsleepy</code>\n"
-        "• <code>/cancel</code>\n\n"
-        "🔐 Login commands are available only in private chat."
-    )
 
     await update.effective_message.reply_text(
         text,
-        reply_markup=_main_menu_keyboard(
-            private=False
-        ),
+        reply_markup=_main_menu_keyboard(authenticated),
         parse_mode="HTML",
     )
 
+
+# ============================================================
+# MAIN MENU CALLBACK
+# ============================================================
 
 async def main_menu_callback(
     update: Update,
     context: ContextTypes.DEFAULT_TYPE,
 ):
-    """Handle main-menu inline keyboard callbacks."""
-
     query = update.callback_query
 
     if not query:
@@ -186,60 +173,114 @@ async def main_menu_callback(
 
     await query.answer()
 
+    uid = query.from_user.id
     data = query.data or ""
 
-    # ---------------------------------------------------------
-    # BACK
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # Login buttons
+    #
+    # Normally these are handled directly by authentication.py,
+    # but these compatibility branches allow old callback data.
+    # --------------------------------------------------------
 
-    if data == "menu:back":
-        fake_update = update
+    if data == "login:number":
+        from handlers.authentication import begin_number_button
 
-        if fake_update.effective_chat:
-            if fake_update.effective_chat.type == "private":
-                await start(
-                    fake_update,
-                    context,
-                )
-            else:
-                await start(
-                    fake_update,
-                    context,
-                )
-
-        return
-
-    # ---------------------------------------------------------
-    # STATUS
-    # ---------------------------------------------------------
-
-    if data == "menu:status":
-        from handlers.account import status
-
-        await status(
+        await begin_number_button(
             update,
             context,
         )
         return
 
-    # ---------------------------------------------------------
-    # SETTINGS
-    # ---------------------------------------------------------
+    if data == "login:session":
+        from handlers.authentication import begin_session_button
 
-    if data == "menu:settings":
+        await begin_session_button(
+            update,
+            context,
+        )
+        return
+
+    # --------------------------------------------------------
+    # Account status
+    # --------------------------------------------------------
+
+    if data in (
+        "menu:status",
+        "account:status",
+        "status",
+    ):
+        record = await db.users.find_one(
+            {
+                "bot_user_id": uid,
+            }
+        )
+
+        if not record or not record.get("authenticated"):
+            await query.edit_message_text(
+                "❌ <b>No Telegram account is linked.</b>\n\n"
+                "Use the Login buttons below to connect one.",
+                reply_markup=_main_menu_keyboard(False),
+                parse_mode="HTML",
+            )
+            return
+
+        username = record.get("username")
+        first_name = record.get("first_name") or "-"
+        telegram_id = record.get("telegram_user_id") or "-"
+
+        account = (
+            f"@{username}"
+            if username
+            else first_name
+        )
+
+        await query.edit_message_text(
+            "📊 <b>Account Status</b>\n\n"
+            f"👤 Account: {account}\n"
+            f"🆔 Telegram ID: <code>{telegram_id}</code>\n"
+            "🔐 Status: <b>Connected</b>",
+            reply_markup=InlineKeyboardMarkup(
+                [
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Back",
+                            callback_data="back:menu",
+                        )
+                    ]
+                ]
+            ),
+            parse_mode="HTML",
+        )
+        return
+
+    # --------------------------------------------------------
+    # Settings
+    # --------------------------------------------------------
+
+    if data in (
+        "menu:settings",
+        "settings",
+    ):
+        # Preserve the existing settings handler.
         from handlers.settings import settings_command
 
+        fake_update = update
+
         await settings_command(
-            update,
+            fake_update,
             context,
         )
         return
 
-    # ---------------------------------------------------------
-    # HISTORY
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # History
+    # --------------------------------------------------------
 
-    if data == "menu:history":
+    if data in (
+        "menu:history",
+        "history",
+    ):
         from handlers.history import history
 
         await history(
@@ -248,11 +289,14 @@ async def main_menu_callback(
         )
         return
 
-    # ---------------------------------------------------------
-    # HELP
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # Help
+    # --------------------------------------------------------
 
-    if data == "menu:help":
+    if data in (
+        "menu:help",
+        "help",
+    ):
         from handlers.help import help_command
 
         await help_command(
@@ -261,77 +305,63 @@ async def main_menu_callback(
         )
         return
 
-    # ---------------------------------------------------------
-    # TAG ALL
-    # ---------------------------------------------------------
+    # --------------------------------------------------------
+    # Tagging buttons
+    #
+    # These are kept for compatibility with existing start menus.
+    # --------------------------------------------------------
 
-    if data == "menu:tagall":
-        await query.edit_message_text(
-            "📢 <b>Tag All</b>\n\n"
-            "Use:\n"
-            "<code>/tagall your message</code>\n\n"
-            "For example:\n"
-            "<code>/tagall plz join vc</code>\n\n"
-            "For mood tagging:\n"
-            "<code>/tagall romantic</code>",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                [
+    if data.startswith("menu:"):
+        command = data.split(":", 1)[1]
+
+        command_map = {
+            "tagall": "/tagall",
+            "tgallhappy": "/tgallhappy",
+            "tgallsassy": "/tgallsassy",
+            "tgallsulky": "/tgallsulky",
+            "tgallromantic": "/tgallromantic",
+            "tgallsleepy": "/tgallsleepy",
+            "cancel": "/cancel",
+        }
+
+        if command in command_map:
+            await query.edit_message_text(
+                f"ℹ️ Use <code>{command_map[command]}</code> in the group.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup(
                     [
-                        InlineKeyboardButton(
-                            "⬅️ Back",
-                            callback_data="menu:back",
-                        )
+                        [
+                            InlineKeyboardButton(
+                                "⬅️ Back",
+                                callback_data="back:menu",
+                            )
+                        ]
                     ]
-                ]
-            ),
+                ),
+            )
+            return
+
+    # --------------------------------------------------------
+    # Back to menu
+    # --------------------------------------------------------
+
+    if data in (
+        "back:menu",
+        "menu:back",
+    ):
+        record = await db.users.find_one(
+            {
+                "bot_user_id": uid,
+                "authenticated": True,
+            }
         )
-        return
-
-    # ---------------------------------------------------------
-    # MOOD SHORTCUTS
-    # ---------------------------------------------------------
-
-    mood_commands = {
-        "menu:tgallhappy": "happy",
-        "menu:tgallsassy": "sassy",
-        "menu:tgallsulky": "sulky",
-        "menu:tgallromantic": "romantic",
-        "menu:tgallsleepy": "sleepy",
-    }
-
-    if data in mood_commands:
-        mood = mood_commands[data]
 
         await query.edit_message_text(
-            f"🎭 <b>{mood.title()} Tagging</b>\n\n"
-            f"Use:\n"
-            f"<code>/tgall{mood}</code>\n\n"
-            "Each participant will receive a "
-            "different AI-generated message.",
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup(
-                [
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Back",
-                            callback_data="menu:back",
-                        )
-                    ]
-                ]
+            "🤖 <b>Telegram Userbot Manager</b>\n\n"
+            "Choose an option below.",
+            reply_markup=_main_menu_keyboard(
+                bool(record)
             ),
-        )
-        return
-
-    # ---------------------------------------------------------
-    # CANCEL
-    # ---------------------------------------------------------
-
-    if data == "menu:cancel":
-        from handlers.tagall import cancel
-
-        await cancel(
-            update,
-            context,
+            parse_mode="HTML",
         )
         return
