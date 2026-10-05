@@ -161,18 +161,18 @@ async def _generate_unique_mood_message(
         previous_messages = "- None"
 
     instruction = (
-        f"Create one fresh and unique {mood} message "
-        f"for the Telegram user named {member_name}.\n\n"
-        "Keep the message natural, concise and suitable "
-        "for a Telegram group.\n"
-        "Do not mention AI.\n"
-        "Do not mention prompts or instructions.\n"
-        "Do not copy any previously generated message.\n"
-        "Use different wording from the previous messages.\n\n"
-        f"Group: {group_title or 'Telegram group'}\n"
-        f"Eligible members: {member_count}\n\n"
-        "Previously generated messages:\n"
-        f"{previous_messages}"
+f"Create one fresh and unique {mood} message "
+    f"for the Telegram user named {member_name}.\n\n"
+    "Keep the message natural, concise and suitable "
+    "for a Telegram group.\n"
+    "Do not mention AI.\n"
+    "Do not mention prompts or instructions.\n"
+    "Do not copy any previously generated message.\n"
+    "Use different wording from the previous messages.\n\n"
+    f"Group: {group_title or 'Telegram group'}\n"
+    f"Eligible members: {member_count}\n\n"
+    "Previously generated messages:\n"
+    f"{previous_messages}"
     )
 
     for attempt in range(3):
